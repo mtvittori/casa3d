@@ -9,10 +9,12 @@
     "build:app": "vite build",
     "build:card": "vite build --config vite.card.config.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build:artifact": "vite build --config vite.artifact.config.ts && node scripts/single-html.mjs"
   },
   "dependencies": {
     "lit": "^3.3.3",
+    "pdfjs-dist": "^4.10.38",
     "three": "^0.186.1"
   },
   "devDependencies": {

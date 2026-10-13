@@ -5,6 +5,17 @@ Da un'immagine di planimetria a un floorplan 2D e a un modello 3D della casa, co
 - **Editor web** (`index.html`, `src/app`): carichi l'immagine, rilevi muri e stanze, correggi a mano, posizioni le entità HA, scegli la skin ed esporti.
 - **Card Lovelace** (`src/card`): `custom:casa3d-card`, un unico file JS da caricare in Home Assistant che mostra la casa in 2D o 3D e accende/spegne le entità al tocco.
 
+## Planimetrie reali (catasto, scansioni, PDF)
+
+L'editor accetta immagini e PDF (con scelta della pagina). Per una scansione:
+
+1. **Ruota** finché la pianta è dritta e **Ritaglia** solo la pianta che ti serve, se il foglio ne contiene più di una.
+2. Il rilevamento compensa ombre e puntinato della fotocopia e riempie i muri disegnati a doppia linea. Il valore scelto compare in *Muri a doppia linea*; se i muri escono spezzati, prova un valore più alto.
+3. **Seleziona** trascinando un rettangolo per eliminare in un colpo scale, simboli e segni rimasti, poi **Ricalcola stanze**.
+4. Usa **Scala** su una quota nota (ad esempio la lunghezza totale della casa) per avere misure reali nel 3D.
+
+Oggi vengono riconosciuti solo i muri orizzontali e verticali; quelli obliqui si disegnano con lo strumento **Muro**.
+
 ## Struttura
 
 ```
@@ -13,7 +24,7 @@ src/core/detect.ts    estrazione muri/stanze: soglia Otsu → apertura morfologi
 src/core/render2d.ts  floorplan SVG
 src/core/render3d.ts  scena Three.js (muri estrusi, pavimenti, luci legate alle entità)
 src/core/skins.ts     skin incluse (Minimal, Notte, Parquet, Blueprint, Pastello)
-src/app/              editor web + client WebSocket di Home Assistant
+src/app/              editor web, lettura PDF (pdf.js) e client WebSocket di Home Assistant
 src/card/             custom card Lovelace (Lit)
 ```
 
@@ -24,6 +35,7 @@ npm install
 npm run dev        # editor su http://localhost:5173
 npm test           # test del rilevamento
 npm run build      # dist/app (editor) + dist/card/casa3d-card.js
+npm run build:artifact   # editor in un'unica pagina HTML: dist/casa3d.html
 ```
 
 ## Usare la card in Home Assistant

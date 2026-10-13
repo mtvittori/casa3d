@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Casa 3D – editor planimetria</title>
+    <title>Casa 3D</title>
     <link rel="stylesheet" href="./src/app/style.css" />
   </head>
   <body>
@@ -15,21 +15,29 @@
       <aside>
         <section>
           <h3>1 · Planimetria</h3>
-          <label class="file">Carica immagine<input id="file" type="file" accept="image/*" /></label>
+          <label class="file">Carica immagine o PDF<input id="file" type="file" accept="image/*,application/pdf,.pdf" /></label>
           <button id="sample">Usa esempio</button>
-          <p class="muted small">Puoi anche trascinare un'immagine sull'area centrale.</p>
+          <label id="pdfPageRow" hidden>Pagina del PDF <select id="pdfPage"></select></label>
+          <div class="tools">
+            <button id="rotL" title="Ruota di 90° in senso antiorario">↺ Ruota</button>
+            <button id="rotR" title="Ruota di 90° in senso orario">↻ Ruota</button>
+            <button id="cropBtn" data-tool="crop" title="Trascina un rettangolo attorno alla pianta">Ritaglia</button>
+            <button id="resetImg" title="Torna all'immagine originale">Ripristina</button>
+          </div>
+          <p class="muted small">Puoi anche trascinare un file sull'area centrale. Se il foglio ha più piante, ritaglia quella che ti serve.</p>
         </section>
         <section>
           <h3>2 · Rilevamento</h3>
           <label>Soglia <span id="thrVal">auto</span><input id="thr" type="range" min="0" max="255" value="0" /></label>
           <label>Spessore minimo muro (px) <input id="minT" type="number" min="1" max="60" placeholder="auto" /></label>
+          <label>Muri a doppia linea: riempi fino a (px) <input id="fillGap" type="number" min="0" max="80" placeholder="auto" /></label>
           <button id="detect" class="primary">Rileva muri e stanze</button>
           <p id="detectInfo" class="muted small"></p>
         </section>
         <section>
           <h3>3 · Correggi</h3>
           <div class="tools" id="tools">
-            <button data-tool="select" class="on" title="Seleziona muro o stanza">Seleziona</button>
+            <button data-tool="select" class="on" title="Clic su muro o stanza; trascina per selezionare più muri">Seleziona</button>
             <button data-tool="wall" title="Trascina per disegnare un muro">Muro</button>
             <button data-tool="entity" title="Clicca in una stanza per aggiungere un'entità">Entità</button>
             <button data-tool="calibrate" title="Trascina su una misura nota">Scala</button>
