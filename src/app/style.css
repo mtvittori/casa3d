@@ -172,6 +172,11 @@ main {
   overflow: auto;
   padding: 16px;
 }
+#edit.on {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
 #editInner {
   position: relative;
   display: inline-block;
@@ -179,6 +184,8 @@ main {
 #srcImg {
   display: block;
   max-width: 100%;
+  /* l'intera pianta resta visibile: altezza del riquadro meno il padding */
+  max-height: calc(100vh - 140px);
   opacity: 0.55;
 }
 #overlay {

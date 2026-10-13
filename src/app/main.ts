@@ -5,10 +5,11 @@ import { FloorScene3D } from '../core/render3d';
 import { drawSamplePlan } from '../core/sample';
 import { SKINS, Skin, getSkin } from '../core/skins';
 import { HAClient } from './ha';
+import type { PdfFile } from './pdf';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-type Tool = 'select' | 'wall' | 'entity' | 'calibrate';
+type Tool = 'select' | 'wall' | 'entity' | 'calibrate' | 'crop';
 type Tab = 'edit' | '2d' | '3d';
 
 const state = {
@@ -18,7 +19,7 @@ const state = {
   skin: SKINS[0] as Skin,
   tool: 'select' as Tool,
   tab: 'edit' as Tab,
-  selectedWall: '' as string,
+  selectedWalls: new Set<string>(),
   selectedRoom: '' as string,
   demoStates: {} as StateMap,
 };
@@ -62,38 +63,118 @@ function toast(msg: string) {
 
 // ---------- immagine ----------
 
+/** Immagine caricata (o pagina del PDF) e versione corrente dopo rotazioni e ritagli. */
+let original: HTMLCanvasElement | null = null;
+let source: HTMLCanvasElement | null = null;
+let pdf: PdfFile | null = null;
+/** Lato massimo dell'immagine su cui gira il rilevamento. */
+const WORK_SIZE = 1600;
+
+function canvasOf(w: number, h: number): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = Math.max(1, Math.round(w));
+  c.height = Math.max(1, Math.round(h));
+  return c;
+}
+
+async function loadFile(f: File) {
+  if (f.type === 'application/pdf' || /\.pdf$/i.test(f.name)) {
+    toast('Apro il PDF…');
+    const { openPdf } = await import('./pdf');
+    pdf = await openPdf(await f.arrayBuffer());
+    const sel = $<HTMLSelectElement>('pdfPage');
+    sel.innerHTML = Array.from({ length: pdf.pages }, (_, i) => `<option value="${i + 1}">${i + 1} di ${pdf!.pages}</option>`).join('');
+    $('pdfPageRow').hidden = pdf.pages < 2;
+    await loadImage(await pdf.render(1));
+  } else {
+    pdf = null;
+    $('pdfPageRow').hidden = true;
+    await loadImage(URL.createObjectURL(f));
+  }
+}
+
 async function loadImage(src: string | HTMLCanvasElement) {
   let canvas: HTMLCanvasElement;
   if (typeof src === 'string') {
     const img = new Image();
     img.src = src;
     await img.decode();
-    // limita le dimensioni per tenere veloce il rilevamento
-    const k = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
-    canvas = document.createElement('canvas');
-    canvas.width = Math.round(img.naturalWidth * k);
-    canvas.height = Math.round(img.naturalHeight * k);
+    // teniamo una buona risoluzione per poter ritagliare senza perdere dettaglio
+    const k = Math.min(1, 3000 / Math.max(img.naturalWidth, img.naturalHeight));
+    canvas = canvasOf(img.naturalWidth * k, img.naturalHeight * k);
     canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height);
   } else canvas = src;
-  const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height);
-  state.image = { width: canvas.width, height: canvas.height, data: data.data };
-  state.imageUrl = canvas.toDataURL('image/png');
+  original = source = canvas;
+  // nuova immagine: soglia di nuovo automatica
+  $<HTMLInputElement>('thr').value = '0';
+  $('thrVal').textContent = 'auto';
+  prepareWork();
+}
+
+/** Riduce l'immagine corrente alla dimensione di lavoro e rilancia il rilevamento. */
+function prepareWork() {
+  if (!source) return;
+  const k = Math.min(1, WORK_SIZE / Math.max(source.width, source.height));
+  const work = canvasOf(source.width * k, source.height * k);
+  const ctx = work.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, work.width, work.height);
+  ctx.drawImage(source, 0, 0, work.width, work.height);
+  const data = ctx.getImageData(0, 0, work.width, work.height);
+  state.image = { width: work.width, height: work.height, data: data.data };
+  state.imageUrl = work.toDataURL('image/png');
   ($('srcImg') as HTMLImageElement).src = state.imageUrl;
   $('empty').style.display = 'none';
   runDetect();
 }
 
+function rotate(dir: 1 | -1) {
+  if (!source) return;
+  const r = canvasOf(source.height, source.width);
+  const ctx = r.getContext('2d')!;
+  ctx.translate(r.width / 2, r.height / 2);
+  ctx.rotate((dir * Math.PI) / 2);
+  ctx.drawImage(source, -source.width / 2, -source.height / 2);
+  source = r;
+  prepareWork();
+}
+
+/** Ritaglia l'immagine corrente al rettangolo `a`-`b` (coordinate dell'immagine di lavoro). */
+function cropTo(a: Point, b: Point) {
+  if (!source || !state.image) return;
+  const k = source.width / state.image.width;
+  const x = Math.max(0, Math.min(a.x, b.x) * k);
+  const y = Math.max(0, Math.min(a.y, b.y) * k);
+  const w = Math.min(source.width - x, Math.abs(b.x - a.x) * k);
+  const h = Math.min(source.height - y, Math.abs(b.y - a.y) * k);
+  if (w < 20 || h < 20) return;
+  const c = canvasOf(w, h);
+  c.getContext('2d')!.drawImage(source, x, y, w, h, 0, 0, c.width, c.height);
+  source = c;
+  prepareWork();
+}
+
 function runDetect() {
   if (!state.image) return;
-  const thr = Number(($('thr') as HTMLInputElement).value);
-  const minT = Number(($('minT') as HTMLInputElement).value);
+  const num = (id: string) => {
+    const v = $<HTMLInputElement>(id).value;
+    return v === '' ? undefined : Number(v);
+  };
   const t0 = performance.now();
-  const res = detect(state.image, { threshold: thr || undefined, minThickness: minT || undefined });
+  const res = detect(state.image, {
+    threshold: num('thr') || undefined,
+    minThickness: num('minT') || undefined,
+    fillGap: num('fillGap'),
+  });
   state.plan = res.plan;
-  state.selectedWall = state.selectedRoom = '';
-  ($('thr') as HTMLInputElement).value = String(res.threshold);
+  state.selectedWalls.clear();
+  state.selectedRoom = '';
+  $<HTMLInputElement>('thr').value = String(res.threshold);
   $('thrVal').textContent = String(res.threshold);
-  $('detectInfo').textContent = `${res.plan.walls.length} muri, ${res.plan.rooms.length} stanze in ${Math.round(performance.now() - t0)} ms`;
+  $<HTMLInputElement>('fillGap').placeholder = `auto (${res.fillGap})`;
+  $('detectInfo').textContent =
+    `${res.plan.walls.length} muri, ${res.plan.rooms.length} stanze in ${Math.round(performance.now() - t0)} ms` +
+    (res.fillGap ? ` · muri a doppia linea riempiti fino a ${res.fillGap} px` : '');
   syncPlanInputs();
   refresh(true);
 }
@@ -144,7 +225,7 @@ function renderOverlay() {
     );
   });
   for (const w of p.walls) {
-    const sel = w.id === state.selectedWall;
+    const sel = state.selectedWalls.has(w.id);
     parts.push(
       `<line data-wall="${w.id}" x1="${w.a.x}" y1="${w.a.y}" x2="${w.b.x}" y2="${w.b.y}" stroke="${sel ? '#e53935' : '#d97706'}" stroke-opacity="0.85" stroke-width="${Math.max(w.thickness, 6)}" style="cursor:pointer"/>`,
     );
@@ -159,10 +240,17 @@ function renderOverlay() {
         `<circle cx="${e.position.x}" cy="${e.position.y}" r="${Math.max(7, p.scale * 0.18)}" fill="#16a34a" stroke="#fff" stroke-width="2"><title>${escapeHtml(e.entity_id)}</title></circle>`,
       );
   }
-  if (drag) {
+  if (drag?.kind === 'line') {
     const color = state.tool === 'calibrate' ? '#7c3aed' : '#e53935';
     parts.push(
       `<line x1="${drag.a.x}" y1="${drag.a.y}" x2="${drag.b.x}" y2="${drag.b.y}" stroke="${color}" stroke-width="${state.tool === 'wall' ? defaultThickness() : 3}" stroke-opacity="0.7" stroke-dasharray="${state.tool === 'calibrate' ? '8 4' : ''}"/>`,
+    );
+  } else if (drag?.kind === 'box') {
+    const x = Math.min(drag.a.x, drag.b.x);
+    const y = Math.min(drag.a.y, drag.b.y);
+    const crop = state.tool === 'crop';
+    parts.push(
+      `<rect x="${x}" y="${y}" width="${Math.abs(drag.b.x - drag.a.x)}" height="${Math.abs(drag.b.y - drag.a.y)}" fill="${crop ? 'none' : '#2563eb'}" fill-opacity="0.08" stroke="${crop ? '#16a34a' : '#2563eb'}" stroke-width="3" stroke-dasharray="10 6"/>`,
     );
   }
   svg.innerHTML = parts.join('');
@@ -172,10 +260,14 @@ function renderSelection() {
   const box = $('selection');
   const p = state.plan;
   const room = p?.rooms.find((r) => r.id === state.selectedRoom);
-  const wall = p?.walls.find((w) => w.id === state.selectedWall);
-  if (wall) {
+  const nSel = state.selectedWalls.size;
+  const wall = nSel === 1 ? p?.walls.find((w) => state.selectedWalls.has(w.id)) : undefined;
+  if (nSel > 1) {
+    box.innerHTML = `<div>${nSel} muri selezionati</div><button id="wallDel">Elimina ${nSel} muri (Canc)</button>`;
+    $('wallDel').onclick = deleteSelectedWalls;
+  } else if (wall) {
     box.innerHTML = `<div>Muro selezionato · spessore <input id="wallT" type="number" min="1" value="${wall.thickness}" style="width:60px"> px</div><button id="wallDel">Elimina muro (Canc)</button>`;
-    $('wallDel').onclick = deleteSelectedWall;
+    $('wallDel').onclick = deleteSelectedWalls;
     $('wallT').onchange = (e) => {
       wall.thickness = Number((e.target as HTMLInputElement).value) || wall.thickness;
       refresh(true);
@@ -211,7 +303,8 @@ function renderSelection() {
 
 // ---------- editor ----------
 
-let drag: { a: Point; b: Point } | null = null;
+/** `line`: muro o calibrazione; `box`: selezione multipla o ritaglio. */
+let drag: { kind: 'line' | 'box'; a: Point; b: Point } | null = null;
 
 function toPlan(ev: MouseEvent): Point {
   const svg = $('overlay') as unknown as SVGSVGElement;
@@ -275,15 +368,27 @@ function setupEditor() {
     const p = toPlan(ev);
     if (state.tool === 'wall' || state.tool === 'calibrate') {
       const a = state.tool === 'wall' ? snapPoint(p) : p;
-      drag = { a, b: a };
+      drag = { kind: 'line', a, b: a };
+      ev.preventDefault();
+      return;
+    }
+    if (state.tool === 'crop') {
+      drag = { kind: 'box', a: p, b: p };
       ev.preventDefault();
       return;
     }
     if (state.tool === 'select') {
-      const t = ev.target as Element;
-      state.selectedWall = t.getAttribute('data-wall') ?? '';
-      state.selectedRoom = state.selectedWall ? '' : (t.getAttribute('data-room') ?? roomAt(p)?.id ?? '');
-      refresh();
+      const id = (ev.target as Element).getAttribute('data-wall');
+      if (id) {
+        if (!ev.shiftKey) state.selectedWalls.clear();
+        state.selectedWalls.has(id) && ev.shiftKey ? state.selectedWalls.delete(id) : state.selectedWalls.add(id);
+        state.selectedRoom = '';
+        refresh();
+      } else {
+        // clic su una stanza o trascinamento per selezionare più muri: si decide al rilascio
+        drag = { kind: 'box', a: p, b: p };
+        ev.preventDefault();
+      }
       return;
     }
     if (state.tool === 'entity') {
@@ -301,14 +406,32 @@ function setupEditor() {
   window.addEventListener('mousemove', (ev) => {
     if (!drag) return;
     const p = toPlan(ev);
-    drag.b = state.tool === 'wall' ? snapEnd(drag.a, snapPoint(p)) : p;
+    drag.b = drag.kind === 'line' && state.tool === 'wall' ? snapEnd(drag.a, snapPoint(p)) : p;
     renderOverlay();
   });
-  window.addEventListener('mouseup', () => {
+  window.addEventListener('mouseup', (ev) => {
     if (!drag || !state.plan) return;
-    const { a, b } = drag;
+    const { kind, a, b } = drag;
     drag = null;
     const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (kind === 'box') {
+      if (state.tool === 'crop') {
+        setTool('select');
+        if (len >= 5) cropTo(a, b);
+        else renderOverlay();
+        return;
+      }
+      if (len < 5) {
+        state.selectedWalls.clear();
+        state.selectedRoom = roomAt(a)?.id ?? '';
+      } else {
+        const inside = (q: Point) => q.x >= Math.min(a.x, b.x) && q.x <= Math.max(a.x, b.x) && q.y >= Math.min(a.y, b.y) && q.y <= Math.max(a.y, b.y);
+        if (!ev.shiftKey) state.selectedWalls.clear();
+        for (const w of state.plan.walls) if (inside(w.a) && inside(w.b)) state.selectedWalls.add(w.id);
+        state.selectedRoom = '';
+      }
+      return refresh();
+    }
     if (len < 5) return renderOverlay();
     if (state.tool === 'wall') {
       state.plan.walls.push({ id: uid('w'), a, b, thickness: defaultThickness() });
@@ -326,8 +449,12 @@ function setupEditor() {
     }
   });
   window.addEventListener('keydown', (ev) => {
-    if ((ev.key === 'Delete' || ev.key === 'Backspace') && state.selectedWall && !(ev.target instanceof HTMLInputElement)) {
-      deleteSelectedWall();
+    if ((ev.key === 'Delete' || ev.key === 'Backspace') && state.selectedWalls.size && !(ev.target instanceof HTMLInputElement)) {
+      deleteSelectedWalls();
+    }
+    if (ev.key === 'Escape' && drag) {
+      drag = null;
+      renderOverlay();
     }
   });
 
@@ -342,15 +469,22 @@ function setupEditor() {
     e.preventDefault();
     edit.classList.remove('dragover');
     const f = e.dataTransfer?.files[0];
-    if (f) loadImage(URL.createObjectURL(f));
+    if (f) loadFile(f);
   });
 }
 
-function deleteSelectedWall() {
+function deleteSelectedWalls() {
   if (!state.plan) return;
-  state.plan.walls = state.plan.walls.filter((w) => w.id !== state.selectedWall);
-  state.selectedWall = '';
+  state.plan.walls = state.plan.walls.filter((w) => !state.selectedWalls.has(w.id));
+  state.selectedWalls.clear();
   refresh(true);
+}
+
+function setTool(tool: Tool) {
+  state.tool = tool;
+  document.querySelectorAll<HTMLElement>('[data-tool]').forEach((x) => x.classList.toggle('on', x.dataset.tool === tool));
+  $('overlay').style.cursor = tool === 'select' ? 'default' : 'crosshair';
+  if (tool === 'crop') toast('Trascina un rettangolo attorno alla pianta da usare');
 }
 
 function recomputeRooms() {
@@ -478,7 +612,17 @@ function init() {
 
   $('file').onchange = (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
-    if (f) loadImage(URL.createObjectURL(f));
+    if (f) loadFile(f).catch((err) => toast('File non leggibile: ' + (err as Error).message));
+  };
+  $('pdfPage').onchange = async () => {
+    if (pdf) await loadImage(await pdf.render(Number($<HTMLSelectElement>('pdfPage').value)));
+  };
+  $('rotL').onclick = () => rotate(-1);
+  $('rotR').onclick = () => rotate(1);
+  $('cropBtn').onclick = () => setTool(state.tool === 'crop' ? 'select' : 'crop');
+  $('resetImg').onclick = () => {
+    source = original;
+    prepareWork();
   };
   $('sample').onclick = () => loadImage(drawSamplePlan()).then(nameSampleRooms);
   $('thr').oninput = () => ($('thrVal').textContent = ($('thr') as HTMLInputElement).value);
@@ -492,14 +636,7 @@ function init() {
     if (state.plan) state.plan.wallHeight = Number(($('height') as HTMLInputElement).value) || state.plan.wallHeight;
     refresh(true);
   };
-  document.querySelectorAll<HTMLButtonElement>('#tools button').forEach(
-    (b) =>
-      (b.onclick = () => {
-        state.tool = b.dataset.tool as Tool;
-        document.querySelectorAll('#tools button').forEach((x) => x.classList.toggle('on', x === b));
-        $('overlay').style.cursor = state.tool === 'select' ? 'default' : 'crosshair';
-      }),
-  );
+  document.querySelectorAll<HTMLButtonElement>('#tools button').forEach((b) => (b.onclick = () => setTool(b.dataset.tool as Tool)));
   document.querySelectorAll<HTMLButtonElement>('#tabs button').forEach((b) => (b.onclick = () => setTab(b.dataset.tab as Tab)));
   $('v2d').addEventListener('click', (ev) => {
     const g = (ev.target as Element).closest('[data-entity]');

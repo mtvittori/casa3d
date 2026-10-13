@@ -1,6 +1,8 @@
 // Estrazione deterministica di muri e stanze da un'immagine di planimetria.
-// Pipeline: scala di grigi → soglia (Otsu) → apertura morfologica (toglie testo e linee sottili)
-// → rettangoli orizzontali/verticali di pixel scuri = muri → chiusura porte → flood fill = stanze.
+// Pipeline: scala di grigi → appiattimento dello sfondo (ombre di scansione) → soglia (Otsu)
+// → rimozione di puntinato e testo (componenti piccole) → chiusura morfologica (riempie i muri disegnati a contorno)
+// → apertura morfologica (toglie linee sottili) → rettangoli orizzontali/verticali = muri
+// → chiusura porte → flood fill = stanze.
 
 import { FloorPlan, Point, Room, Wall, emptyPlan, polygonArea, uid } from './model';
 
@@ -24,11 +26,20 @@ export interface DetectOptions {
   maxDoorWidth?: number;
   /** Area minima di una stanza in px². */
   minRoomArea?: number;
+  /**
+   * Distanza massima in px tra le due linee di un muro disegnato a contorno (doppia linea):
+   * lo spazio fra le linee viene riempito. 0 = muri già pieni. Assente = scelta automatica.
+   */
+  fillGap?: number;
+  /** Compensa ombre e sfondo non uniforme delle scansioni (default true). */
+  flattenBackground?: boolean;
 }
 
 export interface DetectResult {
   plan: FloorPlan;
   threshold: number;
+  /** Valore di `fillGap` usato (utile quando è scelto in automatico). */
+  fillGap: number;
   /** Maschera dei muri dopo il filtraggio (1 = muro), utile per l'anteprima. */
   wallMask: Uint8Array;
 }
@@ -157,19 +168,151 @@ function transpose(mask: Uint8Array, w: number, h: number): Uint8Array {
   return t;
 }
 
+/** Media su una finestra quadrata di lato 2r+1 (separabile, con somme scorrevoli). */
+function boxBlur(src: Uint8Array, w: number, h: number, r: number): Float32Array {
+  const tmp = new Float32Array(w * h);
+  const out = new Float32Array(w * h);
+  for (let y = 0; y < h; y++) {
+    const row = y * w;
+    let sum = 0;
+    let n = 0;
+    for (let x = 0; x <= Math.min(r, w - 1); x++) {
+      sum += src[row + x];
+      n++;
+    }
+    for (let x = 0; x < w; x++) {
+      tmp[row + x] = sum / n;
+      const add = x + r + 1;
+      const rem = x - r;
+      if (add < w) {
+        sum += src[row + add];
+        n++;
+      }
+      if (rem >= 0) {
+        sum -= src[row + rem];
+        n--;
+      }
+    }
+  }
+  for (let x = 0; x < w; x++) {
+    let sum = 0;
+    let n = 0;
+    for (let y = 0; y <= Math.min(r, h - 1); y++) {
+      sum += tmp[y * w + x];
+      n++;
+    }
+    for (let y = 0; y < h; y++) {
+      out[y * w + x] = sum / n;
+      const add = y + r + 1;
+      const rem = y - r;
+      if (add < h) {
+        sum += tmp[add * w + x];
+        n++;
+      }
+      if (rem >= 0) {
+        sum -= tmp[rem * w + x];
+        n--;
+      }
+    }
+  }
+  return out;
+}
+
+/** Divide ogni pixel per lo sfondo locale: ombre e bordi scuri della scansione diventano bianchi. */
+function flatten(gray: Uint8Array, w: number, h: number, r: number): Uint8Array {
+  const bg = boxBlur(gray, w, h, r);
+  const out = new Uint8Array(w * h);
+  for (let i = 0; i < out.length; i++) out[i] = Math.min(255, Math.round((gray[i] / Math.max(1, bg[i])) * 255));
+  return out;
+}
+
+/** Elimina le componenti connesse (8-vicinato) la cui estensione massima è minore di `minSpan` px. */
+function removeSmallComponents(mask: Uint8Array, w: number, h: number, minSpan: number): Uint8Array {
+  const out = new Uint8Array(w * h);
+  const seen = new Uint8Array(w * h);
+  const stack: number[] = [];
+  const comp: number[] = [];
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    comp.length = 0;
+    stack.push(start);
+    seen[start] = 1;
+    let x1 = w;
+    let x2 = 0;
+    let y1 = h;
+    let y2 = 0;
+    while (stack.length) {
+      const i = stack.pop()!;
+      comp.push(i);
+      const x = i % w;
+      const y = (i - x) / w;
+      if (x < x1) x1 = x;
+      if (x > x2) x2 = x;
+      if (y < y1) y1 = y;
+      if (y > y2) y2 = y;
+      for (let dy = -1; dy <= 1; dy++) {
+        const yy = y + dy;
+        if (yy < 0 || yy >= h) continue;
+        for (let dx = -1; dx <= 1; dx++) {
+          const xx = x + dx;
+          if (xx < 0 || xx >= w) continue;
+          const j = yy * w + xx;
+          if (mask[j] && !seen[j]) {
+            seen[j] = 1;
+            stack.push(j);
+          }
+        }
+      }
+    }
+    if (Math.max(x2 - x1, y2 - y1) + 1 >= minSpan) for (const i of comp) out[i] = 1;
+  }
+  return out;
+}
+
 export function detect(img: RasterImage, opts: DetectOptions = {}): DetectResult {
   const { width: w, height: h } = img;
+  const diag = Math.hypot(w, h);
+  const minT = opts.minThickness ?? Math.max(3, Math.round(diag / 400));
+  const minLen = opts.minLength ?? Math.max(minT * 3, Math.round(diag / 60));
+
+  let gray = toGray(img);
+  if (opts.flattenBackground !== false) gray = flatten(gray, w, h, Math.round(diag / 30));
+  const threshold = opts.threshold ?? otsu(gray);
+  let base: Uint8Array = new Uint8Array(w * h);
+  for (let i = 0; i < gray.length; i++) base[i] = gray[i] <= threshold ? 1 : 0;
+  // puntinato, lettere e numeri: componenti più piccole di un muro corto
+  base = removeSmallComponents(base, w, h, minLen);
+
+  if (opts.fillGap !== undefined) return detectWalls(base, w, h, opts, threshold, opts.fillGap);
+  // Scelta automatica: prova muri pieni e muri a contorno di spessore crescente. Un riempimento più
+  // largo vince solo se separa più stanze, o le stesse stanze con almeno il 3% di superficie in più:
+  // a parità di risultato il riempimento minore altera meno il disegno.
+  let best: DetectResult | null = null;
+  let bestRooms = -1;
+  let bestArea = 0;
+  for (const gap of [0, 150, 100, 70, 50].map((k) => (k ? Math.round(diag / k) : 0))) {
+    const res = detectWalls(base, w, h, opts, threshold, gap);
+    const rooms = res.plan.rooms.length;
+    const area = res.plan.rooms.reduce((s, r) => s + polygonArea(r.polygon), 0);
+    if (rooms > bestRooms || (rooms === bestRooms && area > bestArea * 1.03)) {
+      best = res;
+      bestRooms = rooms;
+      bestArea = area;
+    }
+  }
+  return best!;
+}
+
+function detectWalls(base: Uint8Array, w: number, h: number, opts: DetectOptions, threshold: number, fillGap: number): DetectResult {
   const diag = Math.hypot(w, h);
   const minT = opts.minThickness ?? Math.max(3, Math.round(diag / 400));
   const maxT = opts.maxThickness ?? Math.max(minT * 6, Math.round(diag / 40));
   const minLen = opts.minLength ?? Math.max(minT * 3, Math.round(diag / 60));
   const minRoomArea = opts.minRoomArea ?? (diag / 25) ** 2;
 
-  const gray = toGray(img);
-  const threshold = opts.threshold ?? otsu(gray);
-  let mask: Uint8Array = new Uint8Array(w * h);
-  for (let i = 0; i < gray.length; i++) mask[i] = gray[i] <= threshold ? 1 : 0;
-
+  let mask = base;
+  // Chiusura: riempie lo spazio tra le due linee dei muri disegnati a contorno.
+  if (fillGap > 1) mask = morph(morph(mask, w, h, fillGap, false), w, h, fillGap, true);
   // Apertura: elimina tutto ciò che è più sottile di minT.
   mask = morph(morph(mask, w, h, minT, true), w, h, minT, false);
 
@@ -190,7 +333,7 @@ export function detect(img: RasterImage, opts: DetectOptions = {}): DetectResult
   }
 
   const plan = emptyPlan(w, h);
-  plan.walls = walls;
+  plan.walls = pruneThinStubs(pruneIsolated(dropBorderStrips(walls, w, h), minLen * 3, minT + 2), minLen * 4);
   if (walls.length) {
     const ts = walls.map((x) => x.thickness).sort((a, b) => a - b);
     const median = ts[Math.floor(ts.length / 2)];
@@ -200,7 +343,50 @@ export function detect(img: RasterImage, opts: DetectOptions = {}): DetectResult
   // varchi (porte, finestre disegnate a tratto sottile) fino a ~2,5 m o 1/10 della diagonale
   const maxDoor = opts.maxDoorWidth ?? Math.round(Math.max(diag / 10, 2.5 * plan.scale));
   plan.rooms = detectRooms(plan, maxDoor, minRoomArea);
-  return { plan, threshold, wallMask: mask };
+  return { plan, threshold, fillGap, wallMask: mask };
+}
+
+/** Scarta le strisce parallele al bordo dell'immagine: ombre e margini della scansione o della fotocopia. */
+function dropBorderStrips(walls: Wall[], w: number, h: number): Wall[] {
+  return walls.filter((wl) => {
+    const m = wl.thickness / 2 + 2;
+    const vertical = wl.a.x === wl.b.x;
+    const horizontal = wl.a.y === wl.b.y;
+    if (vertical && (wl.a.x <= m || wl.a.x >= w - m)) return false;
+    if (horizontal && (wl.a.y <= m || wl.a.y >= h - m)) return false;
+    return true;
+  });
+}
+
+function wallBox(wl: Wall, pad: number) {
+  const half = wl.thickness / 2 + pad;
+  return {
+    x1: Math.min(wl.a.x, wl.b.x) - half,
+    x2: Math.max(wl.a.x, wl.b.x) + half,
+    y1: Math.min(wl.a.y, wl.b.y) - half,
+    y2: Math.max(wl.a.y, wl.b.y) + half,
+  };
+}
+
+/** Scarta i muri corti che non toccano nessun altro muro (etichette, marcatori di sezione, quote). */
+function pruneIsolated(walls: Wall[], minIsolatedLen: number, pad: number): Wall[] {
+  const boxes = walls.map((wl) => wallBox(wl, pad));
+  return walls.filter((wl, i) => {
+    if (Math.hypot(wl.b.x - wl.a.x, wl.b.y - wl.a.y) >= minIsolatedLen) return true;
+    const a = boxes[i];
+    return boxes.some((b, j) => j !== i && a.x1 <= b.x2 && b.x1 <= a.x2 && a.y1 <= b.y2 && b.y1 <= a.y2);
+  });
+}
+
+/**
+ * Scarta i tratti corti e molto più sottili del muro tipico: sono i segni di finestre e porte
+ * e le linee di quota che attraversano i muri, non tramezzi.
+ */
+function pruneThinStubs(walls: Wall[], maxStubLen: number): Wall[] {
+  if (walls.length < 4) return walls;
+  const ts = walls.map((x) => x.thickness).sort((a, b) => a - b);
+  const median = ts[Math.floor(ts.length / 2)];
+  return walls.filter((wl) => wl.thickness >= median * 0.5 || Math.hypot(wl.b.x - wl.a.x, wl.b.y - wl.a.y) >= maxStubLen);
 }
 
 /** Rasterizza i muri su una griglia di celle `cell` px. */

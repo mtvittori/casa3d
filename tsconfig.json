@@ -10,5 +10,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "vite.config.ts", "vite.card.config.ts"]
+  "include": ["src", "vite.config.ts", "vite.card.config.ts", "vite.artifact.config.ts"]
 }

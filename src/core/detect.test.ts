@@ -65,4 +65,33 @@ describe('detect', () => {
     expect(plan.walls.length).toBe(13);
     expect(plan.rooms.length).toBe(5);
   });
+
+  it('riconosce muri a doppia linea su una scansione rumorosa con ombra', () => {
+    const { img, rect } = canvas(600, 450);
+    // muro a contorno: due linee da 2 px distanti `gap` px
+    const hollowH = (x: number, y: number, len: number, gap = 12) => {
+      rect(x, y, len, 2);
+      rect(x, y + gap, len, 2);
+    };
+    const hollowV = (x: number, y: number, len: number, gap = 12) => {
+      rect(x, y, 2, len);
+      rect(x + gap, y, 2, len);
+    };
+    hollowH(50, 50, 500);
+    hollowH(50, 386, 500);
+    hollowV(50, 50, 350);
+    hollowV(536, 50, 350);
+    // tramezzo con porta
+    hollowV(300, 50, 150, 6);
+    hollowV(300, 270, 130, 6);
+    // puntinato deterministico e ombra scura sul bordo destro
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 6000; i++) rect(Math.floor(rnd() * 599), Math.floor(rnd() * 449), 1, 1, 120);
+    for (let x = 570; x < 600; x++) rect(x, 0, 1, 450, 255 - (x - 570) * 6);
+
+    const { plan, fillGap } = detect(img);
+    expect(fillGap).toBeGreaterThan(6);
+    expect(plan.rooms.length).toBe(2);
+  });
 });
