@@ -1,0 +1,286 @@
+:root {
+  --bg: #f6f6f4;
+  --panel: #ffffff;
+  --text: #1f2328;
+  --muted: #6b7280;
+  --line: #e3e3df;
+  --accent: #2563eb;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --bg: #111318;
+    --panel: #1a1d24;
+    --text: #e6e8ec;
+    --muted: #9aa2b1;
+    --line: #2b303a;
+    --accent: #6ea0ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme='dark'] {
+  --bg: #111318;
+  --panel: #1a1d24;
+  --text: #e6e8ec;
+  --muted: #9aa2b1;
+  --line: #2b303a;
+  --accent: #6ea0ff;
+  color-scheme: dark;
+}
+html {
+  height: 100%;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+}
+header {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  background: var(--panel);
+}
+.muted {
+  color: var(--muted);
+}
+.small {
+  font-size: 12px;
+}
+.layout {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+aside {
+  width: 300px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  padding: 4px 14px 20px;
+}
+aside section {
+  border-bottom: 1px solid var(--line);
+  padding: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+aside h3 {
+  margin: 4px 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+}
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 13px;
+}
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+textarea {
+  font-family: ui-monospace, monospace;
+  font-size: 11px;
+  width: 100%;
+}
+button {
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+label.file {
+  position: relative;
+  border: 1px dashed var(--accent);
+  color: var(--accent);
+  border-radius: 6px;
+  padding: 8px;
+  text-align: center;
+  cursor: pointer;
+}
+label.file input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.tools,
+.tabs {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tools button.on,
+.tabs button.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.tabs {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+#stage {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+.pane {
+  position: absolute;
+  inset: 0;
+  display: none;
+}
+.pane.on {
+  display: block;
+}
+#edit {
+  overflow: auto;
+  padding: 16px;
+}
+#editInner {
+  position: relative;
+  display: inline-block;
+}
+#srcImg {
+  display: block;
+  max-width: 100%;
+  opacity: 0.55;
+}
+#overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+#v2d svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  pointer-events: none;
+}
+#edit.dragover {
+  outline: 3px dashed var(--accent);
+  outline-offset: -8px;
+}
+#selection:empty {
+  display: none;
+}
+#selection {
+  background: var(--bg);
+  border-radius: 6px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.entity-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.entity-row code {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 760px) {
+  .layout {
+    flex-direction: column-reverse;
+  }
+  aside {
+    width: 100%;
+    max-height: 45vh;
+  }
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+.dlg {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  padding: 16px;
+}
+.dlg form {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  width: min(380px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dlg-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+#toast {
+  position: fixed;
+  bottom: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--text);
+  color: var(--bg);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 11;
+  max-width: calc(100% - 32px);
+}
+
+[hidden] {
+  display: none !important;
+}

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="it">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Casa 3D – editor planimetria</title>
+    <link rel="stylesheet" href="./src/app/style.css" />
+  </head>
+  <body>
+    <header>
+      <strong>Casa 3D</strong>
+      <span class="muted">planimetria → floorplan 2D → modello 3D → card Home Assistant</span>
+    </header>
+    <div class="layout">
+      <aside>
+        <section>
+          <h3>1 · Planimetria</h3>
+          <label class="file">Carica immagine<input id="file" type="file" accept="image/*" /></label>
+          <button id="sample">Usa esempio</button>
+          <p class="muted small">Puoi anche trascinare un'immagine sull'area centrale.</p>
+        </section>
+        <section>
+          <h3>2 · Rilevamento</h3>
+          <label>Soglia <span id="thrVal">auto</span><input id="thr" type="range" min="0" max="255" value="0" /></label>
+          <label>Spessore minimo muro (px) <input id="minT" type="number" min="1" max="60" placeholder="auto" /></label>
+          <button id="detect" class="primary">Rileva muri e stanze</button>
+          <p id="detectInfo" class="muted small"></p>
+        </section>
+        <section>
+          <h3>3 · Correggi</h3>
+          <div class="tools" id="tools">
+            <button data-tool="select" class="on" title="Seleziona muro o stanza">Seleziona</button>
+            <button data-tool="wall" title="Trascina per disegnare un muro">Muro</button>
+            <button data-tool="entity" title="Clicca in una stanza per aggiungere un'entità">Entità</button>
+            <button data-tool="calibrate" title="Trascina su una misura nota">Scala</button>
+          </div>
+          <div id="selection" class="small"></div>
+          <button id="rooms">Ricalcola stanze</button>
+          <label>Scala (px per metro) <input id="scale" type="number" min="1" step="0.1" /></label>
+          <label>Altezza muri (m) <input id="height" type="number" min="1" max="6" step="0.1" /></label>
+        </section>
+        <section>
+          <h3>4 · Skin</h3>
+          <select id="skin"></select>
+          <details>
+            <summary class="small">Skin personalizzata (JSON)</summary>
+            <textarea id="skinJson" rows="6"></textarea>
+            <button id="skinApply">Applica</button>
+          </details>
+        </section>
+        <section>
+          <h3>5 · Home Assistant</h3>
+          <label>URL <input id="haUrl" placeholder="http://homeassistant.local:8123" /></label>
+          <label>Token long-lived <input id="haToken" type="password" /></label>
+          <button id="haConnect">Connetti</button>
+          <p id="haInfo" class="muted small">Senza connessione le entità si accendono/spengono in modalità demo.</p>
+          <button id="haDashboard" disabled>Crea dashboard su HA</button>
+        </section>
+        <section>
+          <h3>6 · Esporta</h3>
+          <button id="exportJson">Scarica casa.json</button>
+          <button id="exportYaml">Copia YAML della card</button>
+          <textarea id="yamlOut" rows="6" readonly hidden></textarea>
+          <button id="exportDash">Scarica dashboard YAML</button>
+          <button id="importJson">Importa casa.json</button>
+          <input id="importFile" type="file" accept=".json,application/json" hidden />
+        </section>
+      </aside>
+      <main>
+        <nav class="tabs" id="tabs">
+          <button data-tab="edit" class="on">Modifica</button>
+          <button data-tab="2d">Floorplan 2D</button>
+          <button data-tab="3d">Vista 3D</button>
+        </nav>
+        <div id="stage">
+          <div id="edit" class="pane on">
+            <div id="editInner">
+              <img id="srcImg" alt="" />
+              <svg id="overlay"></svg>
+            </div>
+            <div id="empty" class="empty">Carica una planimetria o usa l'esempio per iniziare.</div>
+          </div>
+          <div id="v2d" class="pane"></div>
+          <div id="v3d" class="pane"></div>
+        </div>
+      </main>
+    </div>
+    <datalist id="entities"></datalist>
+    <div id="dlg" class="dlg" hidden>
+      <form id="dlgForm">
+        <label for="dlgInput" id="dlgLabel"></label>
+        <input id="dlgInput" list="entities" autocomplete="off" />
+        <div class="dlg-row">
+          <button type="button" id="dlgCancel">Annulla</button>
+          <button type="submit" class="primary">OK</button>
+        </div>
+      </form>
+    </div>
+    <div id="toast" role="status" hidden></div>
+    <script type="module" src="./src/app/main.ts"></script>
+  </body>
+</html>
